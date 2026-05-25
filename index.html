@@ -1,0 +1,268 @@
+<!DOCTYPE html><html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>轉盤工具</title>
+<style>
+  *{box-sizing:border-box}body{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#ffffff; overflow:hidden; font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+
+.wheel-stage{ position:relative; width:min(96vw,780px); aspect-ratio:1/1; display:grid; place-items:center; isolation:isolate; }
+
+.shadow-disc{ position:absolute; inset:0; border-radius:50%; background:#ffffff; box-shadow: 0 26px 70px rgba(0,0,0,.26), 0 8px 24px rgba(0,0,0,.18); z-index:0; }
+
+.wheel-frame{ position:absolute; inset:0; border-radius:50%; border:18px solid #ffffff; overflow:hidden; z-index:1; background:#ffffff; transition:filter .2s ease, opacity .2s ease; }
+
+.wheel-stage.empty .shadow-disc, .wheel-stage.empty .wheel-frame, .wheel-stage.empty .hub, .wheel-stage.empty .pointer, .wheel-stage.empty .hub-top{ filter:blur(8px); opacity:.62; }
+
+.wheel-frame svg{ width:100%; height:100%; display:block; transform:scale(1.67) rotate(var(--rotation, 0deg)); transform-origin:center; touch-action:none; user-select:none; }
+
+.wheel-stage.empty .wheel-frame svg{ animation:slowSpin 18s linear infinite; }
+
+@keyframes slowSpin{ from{transform:scale(1.67) rotate(var(--rotation, 0deg))} to{transform:scale(1.67) rotate(calc(var(--rotation, 0deg) + 360deg))} }
+
+.empty-tip{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:10; color:#6b7280; font-size:clamp(16px,4vw,28px); font-weight:900; text-align:center; white-space:nowrap; pointer-events:none; animation:breath 2.8s ease-in-out infinite; }
+
+@keyframes breath{ 0%,100%{opacity:.45; transform:translate(-50%,-50%) scale(.98)} 50%{opacity:1; transform:translate(-50%,-50%) scale(1.02)} }
+
+.hub{ position:absolute; left:50%; top:50%; width:109px; height:109px; transform:translate(-50%,-50%); border-radius:50%; background:#ffffff; box-shadow:0 12px 26px rgba(0,0,0,.28); z-index:4; }
+
+.pointer{ position:absolute; left:50%; top:calc(50% - 71px); width:150px; height:45px; transform:translateX(-50%); z-index:5; pointer-events:none; }
+
+.pointer svg{ width:100%; height:100%; display:block; }
+
+.hub-top{ position:absolute; left:50%; top:50%; width:83px; height:83px; transform:translate(-50%,-50%); border-radius:50%; background:#e5e5e5; border:4px solid #cfcfcf; z-index:6; pointer-events:none; }
+
+.edit-fab{ position:fixed; right:24px; bottom:24px; width:68px; height:68px; border-radius:50%; border:0; background:#eeeeee; box-shadow:none; display:grid; place-items:center; cursor:pointer; z-index:20; font-size:32px; }
+
+.modal-backdrop{ position:fixed; inset:0; background:rgba(255,255,255,.72); backdrop-filter:blur(6px); display:none; align-items:center; justify-content:center; padding:20px; z-index:30; }
+
+.modal-backdrop.show{display:flex}
+
+.modal{ width:min(92vw,520px); background:#ffffff; border-radius:28px; box-shadow:0 24px 80px rgba(0,0,0,.18); padding:20px; display:grid; gap:16px; }
+
+.modal-title{ font-size:22px; font-weight:900; color:#222; text-align:center; }
+
+textarea{ width:100%; min-height:260px; resize:vertical; border:1px solid #e5e7eb; border-radius:18px; padding:16px; font-size:18px; line-height:1.5; outline:none; color:#111; background:#f9fafb; }
+
+textarea:focus{border-color:#c7cdd8;background:#fff}
+
+.ok-btn{ width:100%; border:0; border-radius:18px; padding:16px 18px; background:#111827; color:#fff; font-size:18px; font-weight:900; cursor:pointer; } </style>
+
+</head>
+<body><div id="wheelStage" class="wheel-stage empty">
+  <div class="shadow-disc"></div>  <div class="wheel-frame">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <g id="segments"></g>
+    </svg>
+  </div>  <div id="emptyTip" class="empty-tip">於右下角新增選項</div>  <div class="hub"></div>  <div class="pointer">
+    <svg viewBox="0 0 100 140" aria-hidden="true">
+      <path
+        d="M50 0
+           Q53 0 56 6
+           L150 140
+           L-50 140
+           L44 6
+           Q47 0 50 0Z"
+        fill="#cfcfcf"
+      />
+    </svg>
+  </div>  <div class="hub-top"></div>
+</div><button id="openEditor" class="edit-fab" aria-label="新增或編輯選項">✏️</button>
+
+<div id="modalBackdrop" class="modal-backdrop">
+  <div class="modal">
+    <div class="modal-title">編輯選項</div>
+    <textarea id="itemInput" placeholder="每行一個選項，例如：&#10;項目1&#10;項目2"></textarea>
+    <button id="okBtn" class="ok-btn">OK</button>
+  </div>
+</div><script>
+(() => {
+  const colors = [
+    '#ff4d4d',
+    '#ff9f43',
+    '#ffe66d',
+    '#2ed573',
+    '#1e90ff',
+    '#3742fa',
+    '#a55eea'
+  ];
+
+  let items = [];
+  let rotation = 0;
+  let dragging = false;
+  let lastAngle = 0;
+  let lastTime = 0;
+  let velocity = 0;
+  let inertiaFrame = null;
+
+  const radius = 50;
+  const group = document.getElementById('segments');
+  const emptyTip = document.getElementById('emptyTip');
+  const wheelStage = document.getElementById('wheelStage');
+  const openEditor = document.getElementById('openEditor');
+  const modalBackdrop = document.getElementById('modalBackdrop');
+  const itemInput = document.getElementById('itemInput');
+  const okBtn = document.getElementById('okBtn');
+  const wheelFrame = document.querySelector('.wheel-frame');
+  const wheelSvg = document.querySelector('.wheel-frame svg');
+
+  function polar(cx, cy, r, deg){
+    const rad = (deg - 90) * Math.PI / 180;
+    return {
+      x: cx + r * Math.cos(rad),
+      y: cy + r * Math.sin(rad)
+    };
+  }
+
+  function setRotation(deg){
+    rotation = deg;
+    wheelSvg.style.setProperty('--rotation', `${rotation}deg`);
+  }
+
+  function getPointerAngle(e){
+    const p = e.touches ? e.touches[0] : e;
+    const rect = wheelFrame.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    return Math.atan2(p.clientY - cy, p.clientX - cx) * 180 / Math.PI;
+  }
+
+  function stopInertia(){
+    if(inertiaFrame) cancelAnimationFrame(inertiaFrame);
+    inertiaFrame = null;
+  }
+
+  function startInertia(){
+    stopInertia();
+    let previous = performance.now();
+    const friction = 0.94;
+    const step = (now)=>{
+      const dt = Math.min(32, now - previous);
+      previous = now;
+      setRotation(rotation + velocity * dt);
+      velocity *= Math.pow(friction, dt / 16.67);
+      if(Math.abs(velocity) > 0.01){
+        inertiaFrame = requestAnimationFrame(step);
+      }else{
+        velocity = 0;
+        inertiaFrame = null;
+      }
+    };
+    inertiaFrame = requestAnimationFrame(step);
+  }
+
+  function renderWheel(){
+    group.innerHTML = '';
+    const isEmpty = !items.length;
+    emptyTip.style.display = isEmpty ? 'block' : 'none';
+    wheelStage.classList.toggle('empty', isEmpty);
+
+    const displayItems = isEmpty ? Array.from({length:7},()=> '') : items;
+    const total = displayItems.length;
+
+    for(let i = 0; i < total; i++){
+      const start = (360 / total) * i;
+      const end = start + (360 / total);
+      const p1 = polar(50, 50, radius, start);
+      const p2 = polar(50, 50, radius, end);
+      const large = end - start > 180 ? 1 : 0;
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+      path.setAttribute(
+        'd',
+        `M 50 50
+         L ${p1.x} ${p1.y}
+         A ${radius} ${radius} 0 ${large} 1 ${p2.x} ${p2.y}
+         Z`
+      );
+      path.setAttribute('fill', colors[i % colors.length]);
+      path.setAttribute('stroke', '#ffffff');
+      path.setAttribute('stroke-width', '0.8');
+      group.appendChild(path);
+
+      const textAngle = start + (360 / total) / 2;
+      const textPos = polar(50, 50, 29, textAngle);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+      text.setAttribute('x', textPos.x);
+      text.setAttribute('y', textPos.y);
+      text.setAttribute('fill', '#000000');
+      text.setAttribute('font-size', '2.4');
+      text.setAttribute('font-weight', '700');
+      text.setAttribute('text-anchor', 'start');
+      text.setAttribute('dominant-baseline', 'middle');
+      text.setAttribute('transform', `rotate(${textAngle + 90} ${textPos.x} ${textPos.y})`);
+      text.textContent = displayItems[i];
+      group.appendChild(text);
+    }
+  }
+
+  openEditor.addEventListener('click',()=>{
+    itemInput.value = items.join('\n');
+    modalBackdrop.classList.add('show');
+    setTimeout(()=>itemInput.focus(),50);
+  });
+
+  okBtn.addEventListener('click',()=>{
+    items = itemInput.value
+      .split('\n')
+      .map(v=>v.trim())
+      .filter(Boolean);
+
+    modalBackdrop.classList.remove('show');
+    renderWheel();
+  });
+
+  modalBackdrop.addEventListener('click',e=>{
+    if(e.target === modalBackdrop){
+      modalBackdrop.classList.remove('show');
+    }
+  });
+
+  wheelFrame.addEventListener('pointerdown',e=>{
+    if(!items.length) return;
+    e.preventDefault();
+    stopInertia();
+    dragging = true;
+    wheelFrame.setPointerCapture?.(e.pointerId);
+    lastAngle = getPointerAngle(e);
+    lastTime = performance.now();
+    velocity = 0;
+  });
+
+  wheelFrame.addEventListener('pointermove',e=>{
+    if(!dragging) return;
+    e.preventDefault();
+    const now = performance.now();
+    const angle = getPointerAngle(e);
+    let delta = angle - lastAngle;
+    if(delta > 180) delta -= 360;
+    if(delta < -180) delta += 360;
+    const dt = Math.max(1, now - lastTime);
+    velocity = delta / dt;
+    setRotation(rotation + delta);
+    lastAngle = angle;
+    lastTime = now;
+  });
+
+  function endDrag(e){
+    if(!dragging) return;
+    dragging = false;
+    wheelFrame.releasePointerCapture?.(e.pointerId);
+    startInertia();
+  }
+
+  wheelFrame.addEventListener('pointerup',endDrag);
+  wheelFrame.addEventListener('pointercancel',endDrag);
+  wheelFrame.addEventListener('lostpointercapture',()=>{
+    if(dragging){
+      dragging = false;
+      startInertia();
+    }
+  });
+
+  setRotation(0);
+  renderWheel();
+})();
+</script></body>
+</html>
