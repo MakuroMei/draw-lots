@@ -2,4 +2,5 @@
 https://makuromei.github.io/draw-lots/
 
 建議手機使用
+
 比例爆炸請在瀏覽器設定開啟電腦版網頁
